@@ -1,0 +1,15 @@
+# NEVER upload secrets — these stay on your machine only
+.streamlit/secrets.toml
+*.json                 # service-account key files
+
+# Python noise
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated reports
+reports/*.pdf
+
+# OS noise
+.DS_Store
