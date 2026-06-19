@@ -1,29 +1,33 @@
 # Badger — Python dependencies
 # Install with:  pip install -r requirements.txt
+# Pins are floors (>=) so the installer can use prebuilt wheels for whatever
+# Python version the host runs. Badger reads Google Sheets via gspread (no
+# st-gsheets-connection — that pulled an incompatible old pandas).
 
 # Core app
-streamlit==1.38.0
-pandas==2.2.2
-numpy==1.26.4
+streamlit>=1.38
+pandas>=2.2
+numpy>=1.26
 
-# Google Sheets (live connection — pick the path you use; both are listed)
-st-gsheets-connection==0.0.4      # Streamlit's gsheets connection wrapper
-gspread==6.1.2                    # Direct Sheets API access via service account
-google-auth==2.33.0
-google-auth-oauthlib==1.2.1
+# Google Sheets + Calendar (service account)
+gspread>=6.1
+google-auth>=2.33
+google-auth-oauthlib>=1.2
+google-api-python-client>=2.143   # Google Calendar API
 
-# Calendar + charts
-streamlit-calendar==1.3.0
-plotly==5.23.0
+# Calendar UI + charts
+streamlit-calendar>=1.3
+plotly>=5.23
 
 # Slack (Badger's voice)
-slack_sdk==3.31.0
+slack_sdk>=3.31
 
 # PDF / report generation
-fpdf2==2.7.9
-reportlab==4.2.2
+fpdf2>=2.7
+reportlab>=4.2
 
 # Dates & utilities
-python-dateutil==2.9.0
-rapidfuzz==3.9.6                  # fuzzy name matching to the organigram
-openpyxl==3.1.5                  # Excel export support
+python-dateutil>=2.9
+rapidfuzz>=3.9
+openpyxl>=3.1
+tomli>=2.0 ; python_version < "3.11"   # reads secrets.toml on Python 3.10

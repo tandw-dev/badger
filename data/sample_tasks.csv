@@ -1,0 +1,11 @@
+project,milestone,task,person,est_hours,start_date,due_date,status,pct_complete,notes,client_review
+Giants,Pre-Production,Lock shoot schedule and call sheets,Jack Davis,4,2026-06-15,2026-06-19,In Progress,50,Waiting on location confirm,No
+Giants,Production,Director's treatment v2,Sarah Chen,6,2026-06-16,2026-06-22,Not Started,0,Depends on client brief sign-off,Yes
+Giants,Post,Rough cut assembly,Dev Lead,10,2026-06-23,2026-06-30,Not Started,0,,No
+Rugby's Greatest Rivalry,Research,Archive footage audit,Sarah Chen,8,2026-06-10,2026-06-17,In Progress,70,SuperSport archive access granted,No
+Rugby's Greatest Rivalry,Production,Interview Rassie + Nienaber,Jack Davis,5,2026-06-18,2026-06-20,Not Started,0,Confirm availability,Yes
+Greens and Gold,Concept,Series bible draft,Sarah Chen,12,2026-06-12,2026-06-16,Done,100,Approved internally,No
+Greens and Gold,Pitch,Broadcaster deck,Jack Davis,6,2026-06-17,2026-06-19,In Progress,40,For SABC meeting,Yes
+Centurions,Discovery,Stakeholder interviews,PM Lead,6,2026-06-15,2026-06-21,Not Started,0,,No
+Gary Player,Production,Legacy doc sizzle edit,Dev Lead,9,2026-06-14,2026-06-18,In Progress,60,,Yes
+Carling Black Label Fans,Activation,Fan voting mechanic spec,PM Lead,5,2026-06-16,2026-06-23,Not Started,0,Needs sponsor sign-off,No
