@@ -43,7 +43,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 
 import pandas as pd
@@ -57,13 +57,13 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | badger | %(messa
 # ----------------------------------------------------------------------------- #
 TASK_COLUMNS = [
     "project", "milestone", "task", "person", "est_hours",
-    "start_date", "due_date", "status", "pct_complete",
+    "time_started", "start_date", "due_date", "status", "pct_complete",
     "notes", "client_review", "_tab", "_row",
 ]
 
 # Columns a human is allowed to edit in st.data_editor (mapped back to the Sheet)
 EDITABLE_COLUMNS = [
-    "task", "person", "est_hours", "start_date", "due_date",
+    "task", "person", "est_hours", "time_started", "due_date",
     "status", "pct_complete", "notes",
 ]
 
@@ -74,8 +74,8 @@ VALID_STATUSES = ["Not Started", "In Progress", "Blocked", "Done", "On Hold"]
 SHEET_TASK_HEADERS = {
     "task": "Task",
     "due_date": "Date",
-    "start_date": "Time Started",   # your layout has "Time Started"; treated as start
-    "est_hours": "Duration",        # duration of the task in hours
+    "time_started": "Time Started",  # clock time the work starts (HH:MM)
+    "est_hours": "Duration",         # duration of the task in hours
     "notes": "Detail",
     "person": "Person",
 }
@@ -138,6 +138,33 @@ def parse_date(value) -> Optional[date]:
     except (ValueError, OverflowError, TypeError):
         logger.warning("Could not parse date %r -> leaving blank", value)
         return None
+
+
+def parse_time(value):
+    """Parse a clock time ('08:30', '8:30', '9', '2pm') -> datetime.time or None."""
+    from datetime import time as _time
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if s == "" or s in {"-", "tbc", "tbd", "n/a"}:
+        return None
+    m = re.match(r"^(\d{1,2}):(\d{2})\s*(am|pm)?$", s)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if m.group(3) == "pm" and h < 12:
+            h += 12
+        if m.group(3) == "am" and h == 12:
+            h = 0
+        return _time(h % 24, mn)
+    m = re.match(r"^(\d{1,2})\s*(am|pm)$", s)
+    if m:
+        h = int(m.group(1))
+        if m.group(2) == "pm" and h < 12:
+            h += 12
+        if m.group(2) == "am" and h == 12:
+            h = 0
+        return _time(h % 24, 0)
+    return None
 
 
 def _norm(s) -> str:
@@ -272,14 +299,16 @@ def parse_project_tab(title: str, grid: list, issues: list):
         if not task_name:
             continue  # a row with hours but no task name is noise
 
+        due = parse_date(g("due_date"))
         tasks.append({
             "project": meta["project"],
             "milestone": "",  # your task block isn't milestone-linked; left blank
             "task": task_name,
             "person": g("person"),
             "est_hours": parse_duration(g("est_hours")),
-            "start_date": parse_date(g("start_date")),
-            "due_date": parse_date(g("due_date")),
+            "time_started": g("time_started"),   # raw clock time, e.g. "08:30"
+            "start_date": due,                    # work date (kept for compatibility)
+            "due_date": due,
             "status": "",          # not in your layout yet -> inferred later
             "pct_complete": 0,
             "notes": g("notes"),
@@ -338,6 +367,7 @@ def load_from_csv(file_or_path):
             "task": _norm(r.get("task", "")),
             "person": _norm(r.get("person", r.get("assigned_person", ""))),
             "est_hours": parse_duration(r.get("est_hours", r.get("estimated_hours", ""))),
+            "time_started": _norm(r.get("time_started", r.get("time_started_", ""))),
             "start_date": parse_date(r.get("start_date", "")),
             "due_date": parse_date(r.get("due_date", "")),
             "status": _norm(r.get("status", "")),
@@ -446,6 +476,24 @@ def enrich_tasks(tasks_df: pd.DataFrame) -> pd.DataFrame:
         return s if s else "Not Started"
     df["status"] = df.apply(_infer_status, axis=1)
     df["est_hours"] = pd.to_numeric(df["est_hours"], errors="coerce")
+
+    # time-of-day -> start/end datetimes for the resource time-grid views
+    if "time_started" not in df.columns:
+        df["time_started"] = ""
+    df["start_time"] = df["time_started"].apply(parse_time)
+
+    def _start_dt(r):
+        d, t = r["due_date"], r["start_time"]
+        return datetime.combine(d, t) if isinstance(d, date) and t is not None else None
+
+    def _end_dt(r):
+        sdt, h = r["start_dt"], r["est_hours"]
+        if sdt is not None and pd.notna(h):
+            return sdt + timedelta(hours=float(h))
+        return None
+
+    df["start_dt"] = df.apply(_start_dt, axis=1)
+    df["end_dt"] = df.apply(_end_dt, axis=1)
     return df
 
 

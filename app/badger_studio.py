@@ -389,54 +389,76 @@ if page == "Overview":
 
 
 # =========================================================================== #
-# CALENDAR
+# STUDIO SCHEDULE — Daily / Weekly resource views + Classic calendar
 # =========================================================================== #
 elif page == "Calendar":
-    st.title("Calendar")
-    color_by = st.selectbox("Colour by", ["project", "person", "status"])
-    events = cal.build_calendar_events(tasks_df, color_by=color_by)
-    # overlay Google Calendar meetings (grey/blue) if synced
+    import streamlit.components.v1 as components
+    st.title("Studio Schedule")
     cal_events = st.session_state.get("cal_events", [])
-    if cal_events:
-        events = events + cs.calendar_overlay_events(cal_events)
-        st.caption(f"📅 Overlaying {len(cal_events)} synced meetings (grey).")
-    elif cs.load_calendar_config(cal_secrets())["enabled"] and st.session_state.get("cal_err"):
-        st.caption(f"📅 Calendar sync note: {st.session_state['cal_err']}")
+    # respect the global person filter for the meeting overlay too
+    gp = st.session_state.get("gfilters", {}).get("persons")
+    if gp:
+        cal_events = [e for e in cal_events if e.get("person") in gp]
+    if cs.load_calendar_config(cal_secrets())["enabled"] and not cal_events and st.session_state.get("cal_err"):
+        st.caption(f"📅 Calendar note: {st.session_state['cal_err']}")
 
-    used = False
-    try:
-        from streamlit_calendar import calendar as st_calendar
-        state = st_calendar(events=events, options=cal.calendar_options(), key="badger_cal")
-        used = True
-        clicked = (state or {}).get("eventClick")
-        if clicked:
-            ep = clicked["event"]["extendedProps"]
-            st.markdown(f"### {clicked['event']['title']}")
-            st.write(f"**Project:** {ep.get('project')} | **Status:** {ep.get('status')} "
-                     f"| **Hours:** {ep.get('hours')}")
-            if ep.get("notes"):
-                st.write(f"**Notes:** {ep['notes']}")
-            if st.button("📤 Send this to Badger Slack"):
-                person = ep.get("person"); handle = ""
-                if not org.empty and person in set(org["person"]):
-                    handle = org.loc[org["person"] == person, "slack"].iloc[0]
-                if not handle:
-                    st.warning(f"No Slack handle for {person} — add it in Admin.")
-                else:
-                    msg = sl.generate_daily_brief(person, [{"task": clicked['event']['title'],
-                                                 "project": ep.get("project"), "hours": ep.get("hours")}])
-                    res = sl.send_badger_message(handle, msg["text"], msg["blocks"], secrets=slack_secrets())
-                    (st.success("Sent.") if res["ok"] else st.error(res.get("error")))
-    except Exception:
-        used = False
-    if not used:
-        st.info("Calendar component unavailable — grouped daily view.")
-        for d, grp in tasks_df.dropna(subset=["due_date"]).groupby("due_date"):
-            st.markdown(f"**{d.strftime('%A %d %b %Y')}**")
-            for _, t in grp.iterrows():
-                hrs = f" ({t['est_hours']:.0f}h)" if pd.notna(t["est_hours"]) else ""
-                st.markdown(f"- {t['person'] or 'Unassigned'} · {t['task']}{hrs} "
-                            f"<span class='small'>· {t['project']}</span>", unsafe_allow_html=True)
+    tabs = st.tabs(["🗓 Daily Resource View", "📊 Weekly Resource View", "Classic calendar"])
+
+    # ---------- DAILY ----------
+    with tabs[0]:
+        h1, h2, h3 = st.columns([2, 2, 3])
+        day = h1.date_input("Day", value=date.today(), key="daily_day")
+        only_tasks = h2.checkbox("Only people with project tasks", value=False)
+        st.caption("Project tasks coloured by project · meetings in grey (dashed). "
+                   "Hover any block for detail. Capacity per person shown under their name.")
+        sched = cal.build_daily_schedule(tasks_df, cal_events, org, day)
+        if only_tasks:
+            sched["people"] = [p for p in sched["people"] if p["task_hours"] > 0]
+        components.html(cal.render_daily_grid_html(sched), height=780, scrolling=True)
+
+        # editable strip for that day's tasks -> writes back to the Sheet
+        tday = tasks_df[tasks_df["due_date"] == day]
+        if not tday.empty:
+            with st.expander(f"✏️ Edit {day.strftime('%a %d %b')} tasks (saves to Google Sheet)"):
+                ed_src = cal.to_editor_frame(tday)
+                ed = st.data_editor(ed_src, use_container_width=True, hide_index=True,
+                                    column_config=cal.editor_column_config(), key="daily_editor")
+                cc1, cc2 = st.columns([1, 3])
+                conf = cc2.checkbox("Confirm save", key="daily_save_conf")
+                if cc1.button("💾 Save day", key="daily_save"):
+                    if bundle.source != "gsheets":
+                        st.warning("Write-back needs the live Sheet.")
+                    elif not conf:
+                        st.warning("Tick confirm first.")
+                    else:
+                        res = dp.write_back_tasks(bundle.handles, ed, ed_src)
+                        if res["errors"]:
+                            st.error(" / ".join(res["errors"]))
+                        else:
+                            st.toast(f"Saved {res['updated']} cell(s).", icon="✅")
+                            load_data(); st.rerun()
+
+    # ---------- WEEKLY ----------
+    with tabs[1]:
+        default_mon = date.today() - timedelta(days=date.today().weekday())
+        wk = st.date_input("Week starting (Mon)", value=default_mon, key="wk_start")
+        wk = wk - timedelta(days=wk.weekday())  # snap to Monday
+        st.caption("Green = healthy · amber = near capacity · red = over. "
+                   "Each cell: total booked hours (tasks + meetings); hover for the split.")
+        grid = cal.build_weekly_grid(tasks_df, cal_events, org, wk)
+        components.html(cal.render_weekly_grid_html(grid), height=680, scrolling=True)
+
+    # ---------- CLASSIC ----------
+    with tabs[2]:
+        color_by = st.selectbox("Colour by", ["project", "person", "status"], key="classic_color")
+        events = cal.build_calendar_events(tasks_df, color_by=color_by)
+        if cal_events:
+            events = events + cs.calendar_overlay_events(cal_events)
+        try:
+            from streamlit_calendar import calendar as st_calendar
+            st_calendar(events=events, options=cal.calendar_options(), key="badger_cal")
+        except Exception:
+            st.info("Calendar component unavailable — use the Daily/Weekly views above.")
 
 
 # =========================================================================== #

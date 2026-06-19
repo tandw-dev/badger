@@ -291,6 +291,213 @@ def to_editor_frame(tasks_df: pd.DataFrame) -> pd.DataFrame:
     return tasks_df[present].copy().reset_index(drop=True)
 
 
+# --------------------------------------------------------------------------- #
+# RESOURCE SCHEDULING VIEWS — Daily time-grid + Weekly grid (tasks + meetings)
+# --------------------------------------------------------------------------- #
+WORK_START_H = 7    # default visible window
+WORK_END_H = 19
+MEET_COLOR = "#64748b"   # slate — meetings
+
+def _mins(dt) -> int:
+    return dt.hour * 60 + dt.minute
+
+def build_daily_schedule(tasks_df: pd.DataFrame, events: list,
+                         organigram_df: pd.DataFrame, day: date,
+                         day_start_h: int = WORK_START_H, day_end_h: int = WORK_END_H) -> dict:
+    """
+    Shape one day for the time-grid: per person, timed blocks (tasks + meetings)
+    positioned by clock time, untimed tasks, and capacity numbers.
+    """
+    from scheduler import cap_for, _capacity_map
+    caps = _capacity_map(organigram_df)
+    events = events or []
+    proj_keys = list(tasks_df["project"].dropna().unique())
+
+    # tasks for this day
+    tday = tasks_df[(tasks_df["due_date"] == day) &
+                    (tasks_df["person"].astype(str).str.strip() != "")].copy()
+    # meetings for this day, keyed by person
+    mday = [e for e in events if e.get("date") == day and not e.get("all_day")]
+
+    people = sorted(set(tday["person"]) | {e["person"] for e in mday})
+    lo, hi = day_start_h * 60, day_end_h * 60
+
+    cols = []
+    for person in people:
+        timed, untimed = [], []
+        t_hours = m_hours = 0.0
+        for _, t in tday[tday["person"] == person].iterrows():
+            h = float(t["est_hours"]) if pd.notna(t["est_hours"]) else 0.0
+            t_hours += h
+            sdt, edt = t.get("start_dt"), t.get("end_dt")
+            color = _stable_color(t["project"], proj_keys)
+            if sdt is not None and edt is not None:
+                s, e = _mins(sdt), _mins(edt)
+                lo, hi = min(lo, s), max(hi, e)
+                timed.append({"start": s, "end": e, "label": t["task"],
+                              "sub": f'{t["project"]} · {h:.1f}h', "color": color, "kind": "task",
+                              "title": f'{t["task"]} — {t["project"]} ({h:.1f}h, {t["status"]})'})
+            else:
+                untimed.append({"label": t["task"], "sub": f'{t["project"]} · {h:.0f}h',
+                                "color": color})
+        for e in [x for x in mday if x["person"] == person]:
+            s, en = _mins(e["start"]), _mins(e["end"])
+            lo, hi = min(lo, s), max(hi, en)
+            m_hours += e["duration_hours"]
+            atts = (", ".join(e["attendees"][:5]) if e.get("attendees") else "")
+            timed.append({"start": s, "end": en, "label": e["title"],
+                          "sub": f'{e["duration_hours"]:.1f}h meeting', "color": MEET_COLOR,
+                          "kind": "meeting",
+                          "title": f'📅 {e["title"]} ({e["duration_hours"]:.1f}h)'
+                                   + (f' · {atts}' if atts else '')})
+        cap = cap_for(person, caps)
+        booked = t_hours + m_hours
+        band = "red" if booked > cap else ("amber" if booked >= 0.85 * cap else "green")
+        cols.append({"person": person, "timed": sorted(timed, key=lambda b: b["start"]),
+                     "untimed": untimed, "task_hours": round(t_hours, 1),
+                     "meeting_hours": round(m_hours, 1), "capacity": cap,
+                     "band": band})
+    # round window to whole hours
+    lo = (lo // 60) * 60
+    hi = -(-hi // 60) * 60
+    return {"day": day, "people": cols, "axis_start": lo, "axis_end": hi}
+
+
+def render_daily_grid_html(schedule: dict) -> str:
+    """Google-Calendar-style HTML: time gutter + one column per person."""
+    import html
+    NAVY = "#0f172a"
+    band_hex = {"green": "#16a34a", "amber": "#d97706", "red": "#dc2626"}
+    lo, hi = schedule["axis_start"], schedule["axis_end"]
+    span = max(60, hi - lo)
+    PXH = 58
+    grid_h = int(span / 60 * PXH)
+    people = schedule["people"]
+    if not people:
+        return "<div style='padding:24px;color:#64748b'>No tasks or meetings scheduled for this day.</div>"
+
+    # time gutter
+    hours = list(range(lo // 60, hi // 60 + 1))
+    gutter = "".join(
+        f"<div style='height:{PXH}px;font-size:11px;color:#94a3b8;text-align:right;"
+        f"padding-right:6px;border-top:1px solid #eef2f7'>{h:02d}:00</div>" for h in hours[:-1])
+
+    cols_html = ""
+    for c in people:
+        b = band_hex[c["band"]]
+        # untimed chips
+        chips = "".join(
+            f"<div title='{html.escape(u['sub'])}' style='background:{u['color']};color:#fff;"
+            f"font-size:10px;padding:2px 6px;border-radius:5px;margin:2px 0;white-space:nowrap;"
+            f"overflow:hidden;text-overflow:ellipsis'>{html.escape(u['label'])}</div>"
+            for u in c["untimed"])
+        untimed_html = (f"<div style='padding:4px;border-bottom:1px dashed #e2e8f0;"
+                        f"min-height:8px'>{chips}</div>" if c["untimed"] else
+                        "<div style='border-bottom:1px dashed #e2e8f0'></div>")
+        # timed blocks
+        blocks = ""
+        for blk in c["timed"]:
+            top = (blk["start"] - lo) / 60 * PXH
+            h = max(16, (blk["end"] - blk["start"]) / 60 * PXH - 2)
+            dashed = "border:1px dashed rgba(255,255,255,.6);" if blk["kind"] == "meeting" else ""
+            blocks += (
+                f"<div title='{html.escape(blk['title'])}' style='position:absolute;top:{top:.0f}px;"
+                f"left:3px;right:3px;height:{h:.0f}px;background:{blk['color']};color:#fff;"
+                f"border-radius:6px;padding:3px 6px;font-size:11px;overflow:hidden;{dashed}"
+                f"box-shadow:0 1px 2px rgba(0,0,0,.15)'>"
+                f"<b style='font-size:11px'>{html.escape(blk['label'][:40])}</b>"
+                f"<div style='opacity:.85;font-size:10px'>{html.escape(blk['sub'])}</div></div>")
+        # hour gridlines behind blocks
+        lines = "".join(f"<div style='height:{PXH}px;border-top:1px solid #eef2f7'></div>"
+                        for _ in hours[:-1])
+        cols_html += (
+            f"<div style='flex:1;min-width:150px;border-left:1px solid #eef2f7'>"
+            f"<div style='padding:6px 8px;border-bottom:2px solid {b};position:sticky;top:0;"
+            f"background:#fff;z-index:2'>"
+            f"<div style='font-weight:700;font-size:13px;color:{NAVY}'>{html.escape(c['person'])}</div>"
+            f"<div style='font-size:11px;color:{b};font-weight:600'>"
+            f"{c['task_hours']}h task + {c['meeting_hours']}h mtg / {c['capacity']:.0f}h"
+            f"{' ⚠' if c['band']=='red' else ''}</div></div>"
+            f"{untimed_html}"
+            f"<div style='position:relative;height:{grid_h}px'>{lines}{blocks}</div></div>")
+
+    return (
+        f"<div style='font-family:-apple-system,Helvetica,Arial,sans-serif;border:1px solid #e8eaed;"
+        f"border-radius:12px;overflow:auto;max-height:760px'>"
+        f"<div style='display:flex'>"
+        f"<div style='width:54px;flex-shrink:0'>"
+        f"<div style='padding:6px 8px;border-bottom:2px solid #e8eaed;height:34px'></div>"
+        f"<div style='border-bottom:1px dashed #e2e8f0;min-height:8px'></div>{gutter}</div>"
+        f"{cols_html}</div></div>")
+
+
+def build_weekly_grid(tasks_df: pd.DataFrame, events: list, organigram_df: pd.DataFrame,
+                      week_start: date, days: int = 5) -> dict:
+    """People (rows) x days (cols): task+meeting hours, band, item list per cell."""
+    from scheduler import cap_for, _capacity_map
+    caps = _capacity_map(organigram_df)
+    events = events or []
+    day_list = [week_start + timedelta(days=i) for i in range(days)]
+
+    # who appears this week
+    wk_tasks = tasks_df[tasks_df["due_date"].apply(lambda d: isinstance(d, date) and d in day_list)]
+    ppl = set(wk_tasks["person"].astype(str)) | {e["person"] for e in events if e.get("date") in day_list}
+    ppl = sorted(p for p in ppl if str(p).strip())
+
+    cells = {}
+    for p in ppl:
+        for d in day_list:
+            th = wk_tasks[(wk_tasks["person"] == p) & (wk_tasks["due_date"] == d)]["est_hours"].sum(min_count=1)
+            th = float(th) if pd.notna(th) else 0.0
+            mh = sum(e["duration_hours"] for e in events
+                     if e["person"] == p and e.get("date") == d and not e.get("all_day"))
+            cap = cap_for(p, caps)
+            booked = th + mh
+            band = "red" if booked > cap else ("amber" if booked >= 0.85 * cap else ("green" if booked else "none"))
+            cells[(p, d)] = {"task_h": round(th, 1), "mtg_h": round(mh, 1),
+                             "cap": cap, "band": band}
+    return {"people": ppl, "days": day_list, "cells": cells}
+
+
+def render_weekly_grid_html(grid: dict) -> str:
+    """Scannable weekly resource table: rows = people, cols = days, traffic-lit cells."""
+    import html
+    band_bg = {"green": "#dcfce7", "amber": "#fef9c3", "red": "#fee2e2", "none": "#fff"}
+    band_fg = {"green": "#166534", "amber": "#854d0e", "red": "#991b1b", "none": "#94a3b8"}
+    days = grid["days"]
+    if not grid["people"]:
+        return "<div style='padding:24px;color:#64748b'>No commitments this week.</div>"
+    head = "<th style='text-align:left;padding:8px 10px;position:sticky;left:0;background:#0f172a;color:#fff'>Resource</th>"
+    head += "".join(f"<th style='padding:8px 10px;background:#0f172a;color:#fff;font-size:12px'>"
+                    f"{d.strftime('%a')}<br><span style='font-weight:400;color:#cbd5e1'>{d.strftime('%d %b')}</span></th>"
+                    for d in days)
+    head += "<th style='padding:8px 10px;background:#0f172a;color:#fff'>Week</th>"
+
+    rows = ""
+    for p in grid["people"]:
+        wk_total = 0.0
+        tds = ""
+        for d in days:
+            c = grid["cells"][(p, d)]
+            booked = c["task_h"] + c["mtg_h"]
+            wk_total += booked
+            txt = "—" if booked == 0 else f"{booked:.1f}h"
+            sub = "" if booked == 0 else f"<div style='font-size:9px;opacity:.8'>{c['task_h']:.0f}t+{c['mtg_h']:.0f}m</div>"
+            flag = " ⚠" if c["band"] == "red" else ""
+            tds += (f"<td title='{p} · {d.strftime('%a %d %b')}: {c['task_h']}h tasks + {c['mtg_h']}h meetings / {c['cap']:.0f}h' "
+                    f"style='text-align:center;padding:7px 8px;background:{band_bg[c['band']]};"
+                    f"color:{band_fg[c['band']]};font-weight:700;font-size:13px;border:1px solid #fff'>"
+                    f"{txt}{flag}{sub}</td>")
+        rows += (f"<tr><td style='padding:7px 10px;font-weight:600;position:sticky;left:0;background:#f8fafc;"
+                 f"border-right:1px solid #e2e8f0'>{html.escape(p)}</td>{tds}"
+                 f"<td style='text-align:center;padding:7px 10px;font-weight:700;color:#0f172a'>{wk_total:.1f}h</td></tr>")
+
+    return (f"<div style='font-family:-apple-system,Helvetica,Arial,sans-serif;border:1px solid #e8eaed;"
+            f"border-radius:12px;overflow:auto;max-height:720px'>"
+            f"<table style='border-collapse:collapse;width:100%'><thead><tr>{head}</tr></thead>"
+            f"<tbody>{rows}</tbody></table></div>")
+
+
 def editor_column_config():
     """
     st.column_config for the task editor (dropdown status, date pickers, number
@@ -304,8 +511,8 @@ def editor_column_config():
         "task": st.column_config.TextColumn("Task", width="large"),
         "person": st.column_config.TextColumn("Person"),
         "est_hours": st.column_config.NumberColumn("Hours", min_value=0, step=0.5, format="%.1f"),
-        "start_date": st.column_config.DateColumn("Start"),
-        "due_date": st.column_config.DateColumn("Due"),
+        "time_started": st.column_config.TextColumn("Start (hh:mm)"),
+        "due_date": st.column_config.DateColumn("Date"),
         "status": st.column_config.SelectboxColumn("Status", options=statuses),
         "pct_complete": st.column_config.NumberColumn("% Done", min_value=0, max_value=100, step=5),
         "notes": st.column_config.TextColumn("Notes", width="large"),

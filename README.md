@@ -207,6 +207,45 @@ using briefs you export. Actions or cron are simpler and free.
 
 ---
 
+## Studio Schedule views (Calendar page)
+
+The **Calendar** page has three tabs:
+
+**🗓 Daily Resource View (primary)** — a Google-Calendar-style time grid for one day.
+Left gutter is the clock; each column is a person from the organigram. Project
+tasks appear as coloured blocks (by project) positioned by their **Time Started**
++ **Duration**; Google Calendar meetings appear in grey (dashed). Under each name:
+`Xh task + Yh mtg / capacity`, flagged red when over a full day. Tasks without a
+start time show as chips at the top of the column. Use the date picker/arrows to
+change day, and the **"Edit this day's tasks"** expander to change status, hours,
+person, times or notes — **Save** writes straight back to the Sheet.
+
+**📊 Weekly Resource View** — people down the left, weekdays across the top. Each
+cell is that person's total booked hours (tasks + meetings) for the day, traffic-lit
+green/amber/red, with a `Xt+Ym` split and a hover tooltip. The right column totals
+the week. Built for spotting bottlenecks at a glance.
+
+**Classic calendar** — the original FullCalendar month/week view, kept as an
+optional secondary view.
+
+All three respect the global filters (person focus / projects). Utilisation now
+**includes meeting time** — someone with 6h of meetings has only ~1h of project
+capacity left, and the views show it.
+
+### How the data flows
+```
+Google Sheet (tasks: Date + Time Started + Duration + Person)  ─┐
+                                                                ├─► data_parser ─► tasks_df (with start_dt/end_dt)
+Google Calendar (meetings: start/end per person)  ─► calendar_sync ─► events ─┘
+                                                                │
+        calendar_utils.build_daily_schedule / build_weekly_grid │  (merge + capacity maths)
+                                                                ▼
+        render_daily_grid_html / render_weekly_grid_html  ─►  Studio tabs
+                                                                │
+        edit a task in the Daily view ─► data_parser.write_back_tasks ─► back to the Sheet
+```
+The Sheet stays the single source of truth; meetings are read-only from Calendar.
+
 ## Talk to Badger
 
 At the bottom of every page, ask in plain language:
