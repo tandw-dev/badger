@@ -216,6 +216,24 @@ Each person gets a clear block with consistent fields. `Default Daily Productive
 **Email:jenna@tandw.co.za
 **Notes / Constraints / Preferences:**
 
+**Name:** Koketso
+**Role/Title:** DOP
+**Core Skills:** Camera operation, editing
+**Default Daily Productive Capacity:** 7
+**Typical Working Days:** Mon-Fri
+**Slack Handle / User ID:** U0AE08VMC69
+**Email:** koketso@tandw.co.za
+**Notes / Constraints / Preferences:**
+
+**Name:** Judd Quy
+**Role/Title:** Designer
+**Core Skills:** Design, art direction
+**Default Daily Productive Capacity:** 7
+**Typical Working Days:** Mon-Fri
+**Slack Handle / User ID:** UDSK3RHAR
+**Email:** judd@mammothcreative.co.za
+**Notes / Constraints / Preferences:** External / contractor (Mammoth Creative).
+
 ---
 
 ## How Badger Uses This

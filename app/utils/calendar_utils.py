@@ -303,10 +303,13 @@ def _mins(dt) -> int:
 
 def build_daily_schedule(tasks_df: pd.DataFrame, events: list,
                          organigram_df: pd.DataFrame, day: date,
-                         day_start_h: int = WORK_START_H, day_end_h: int = WORK_END_H) -> dict:
+                         day_start_h: int = WORK_START_H, day_end_h: int = WORK_END_H,
+                         include_all: bool = False) -> dict:
     """
     Shape one day for the time-grid: per person, timed blocks (tasks + meetings)
     positioned by clock time, untimed tasks, and capacity numbers.
+    include_all=True shows EVERY person in the organigram (unbooked people appear
+    as empty columns).
     """
     from scheduler import cap_for, _capacity_map
     caps = _capacity_map(organigram_df)
@@ -319,7 +322,10 @@ def build_daily_schedule(tasks_df: pd.DataFrame, events: list,
     # meetings for this day, keyed by person
     mday = [e for e in events if e.get("date") == day and not e.get("all_day")]
 
-    people = sorted(set(tday["person"]) | {e["person"] for e in mday})
+    people = set(tday["person"]) | {e["person"] for e in mday}
+    if include_all and organigram_df is not None and not organigram_df.empty:
+        people |= set(organigram_df["person"].astype(str))
+    people = sorted(p for p in people if str(p).strip())
     lo, hi = day_start_h * 60, day_end_h * 60
 
     cols = []
@@ -432,8 +438,12 @@ def render_daily_grid_html(schedule: dict) -> str:
 
 
 def build_weekly_grid(tasks_df: pd.DataFrame, events: list, organigram_df: pd.DataFrame,
-                      week_start: date, days: int = 5) -> dict:
-    """People (rows) x days (cols): task+meeting hours, band, item list per cell."""
+                      week_start: date, days: int = 5, include_all: bool = False) -> dict:
+    """
+    People (rows) x days (cols): task+meeting hours, band, item list per cell.
+    include_all=True lists EVERY person in the organigram (so unbooked staff
+    show as empty rows — useful for spotting who has free capacity).
+    """
     from scheduler import cap_for, _capacity_map
     caps = _capacity_map(organigram_df)
     events = events or []
@@ -442,6 +452,8 @@ def build_weekly_grid(tasks_df: pd.DataFrame, events: list, organigram_df: pd.Da
     # who appears this week
     wk_tasks = tasks_df[tasks_df["due_date"].apply(lambda d: isinstance(d, date) and d in day_list)]
     ppl = set(wk_tasks["person"].astype(str)) | {e["person"] for e in events if e.get("date") in day_list}
+    if include_all and organigram_df is not None and not organigram_df.empty:
+        ppl |= set(organigram_df["person"].astype(str))
     ppl = sorted(p for p in ppl if str(p).strip())
 
     cells = {}

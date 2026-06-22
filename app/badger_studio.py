@@ -406,13 +406,15 @@ elif page == "Calendar":
 
     # ---------- DAILY ----------
     with tabs[0]:
-        h1, h2, h3 = st.columns([2, 2, 3])
+        h1, h2 = st.columns([2, 3])
         day = h1.date_input("Day", value=date.today(), key="daily_day")
-        only_tasks = h2.checkbox("Only people with project tasks", value=False)
+        show = h2.selectbox("Show", ["People with commitments today", "All staff",
+                                     "Only people with project tasks"], key="daily_show")
         st.caption("Project tasks coloured by project · meetings in grey (dashed). "
                    "Hover any block for detail. Capacity per person shown under their name.")
-        sched = cal.build_daily_schedule(tasks_df, cal_events, org, day)
-        if only_tasks:
+        sched = cal.build_daily_schedule(tasks_df, cal_events, org, day,
+                                         include_all=(show == "All staff"))
+        if show == "Only people with project tasks":
             sched["people"] = [p for p in sched["people"] if p["task_hours"] > 0]
         components.html(cal.render_daily_grid_html(sched), height=780, scrolling=True)
 
@@ -440,12 +442,14 @@ elif page == "Calendar":
 
     # ---------- WEEKLY ----------
     with tabs[1]:
+        wcol1, wcol2 = st.columns([2, 2])
         default_mon = date.today() - timedelta(days=date.today().weekday())
-        wk = st.date_input("Week starting (Mon)", value=default_mon, key="wk_start")
+        wk = wcol1.date_input("Week starting (Mon)", value=default_mon, key="wk_start")
         wk = wk - timedelta(days=wk.weekday())  # snap to Monday
-        st.caption("Green = healthy · amber = near capacity · red = over. "
+        show_all = wcol2.checkbox("Show all staff (incl. unbooked)", value=True)
+        st.caption("Green = healthy · amber = near capacity · red = over · grey '—' = unbooked. "
                    "Each cell: total booked hours (tasks + meetings); hover for the split.")
-        grid = cal.build_weekly_grid(tasks_df, cal_events, org, wk)
+        grid = cal.build_weekly_grid(tasks_df, cal_events, org, wk, include_all=show_all)
         components.html(cal.render_weekly_grid_html(grid), height=680, scrolling=True)
 
     # ---------- CLASSIC ----------
